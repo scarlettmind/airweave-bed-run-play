@@ -18,7 +18,9 @@ probe.width = 120
 probe.height = 80
 const scan = probe.getContext('2d', { willReadFrequently: true })
 const stars = [.22, .48, .64, .80]
-const mushroomX = .33
+const mushroomX = .36
+const mushroomHeight = 104
+const gravity = 1650
 const sprite = [
   '.....WWWW.....', '....WBBBBWW...', '....NSSSSN....', '....NSSNSN....',
   '.....SSSS.....', '...BBBBBBB....', '..BBWBBWWBB...', '..SSBBBBBSS...',
@@ -142,14 +144,15 @@ toggle.onclick = () => {
 }
 
 function jump() {
-  if (state === 'running' && run.z === 0) run.velocity = run.big ? 470 : 390
+  if (state !== 'running') return
+  run.jumpBuffer = .10
 }
 
 function start() {
   snapshot = null
   resultToken++
   byId('score').textContent = '0000'
-  run = { x: .04, z: 0, velocity: 0, score: 0, collected: new Set(), clock: 0, big: false }
+  run = { x: .04, z: 0, velocity: 0, jumpBuffer: 0, score: 0, collected: new Set(), clock: 0, big: false }
   state = 'running'
   refresh('点按画面跳跃。')
 }
@@ -172,14 +175,23 @@ const flagX = .93
 
 function tick(dt) {
   run.clock += dt
-  run.x += dt * (run.x > .80 ? .095 : .125)
+  run.x += dt * (run.big ? .249 : .208)
+  if (!run.z && run.jumpBuffer > 0) {
+    run.velocity = run.big ? 555 : 465
+    run.jumpBuffer = 0
+  }
+  run.jumpBuffer = Math.max(0, run.jumpBuffer - dt)
   if (run.velocity || run.z) {
     run.z = Math.max(0, run.z + run.velocity * dt)
-    run.velocity = run.z ? run.velocity - 1000 * dt : 0
+    run.velocity = run.z ? run.velocity - gravity * dt : 0
   }
-  if (!run.big && Math.abs(run.x - mushroomX) < .035 && run.z < 25) {
+  const head = run.z + 60
+  const trackSpan = track.right - track.left
+  const overlapsMushroom = Math.abs(run.x - mushroomX) * trackSpan < 32 * scale()
+  if (!run.big && overlapsMushroom && run.velocity > 0 && head >= mushroomHeight) {
     run.big = true
     run.score += 150
+    run.grewAt = run.clock
   }
   stars.forEach((x, index) => {
     if (!run.collected.has(index) && Math.abs(run.x - x) < .028 && run.z > 29) {
@@ -202,8 +214,9 @@ function finish() {
 }
 
 function athlete(x, y, moving) {
-  const size = (run?.big ? 8 : 5) * scale()
-  const step = moving && Math.floor(run.clock * 13) % 2 ? 3 : 0
+  const growth = run?.big ? 1 + .6 * Math.min(1, (run.clock - run.grewAt) / .10) : 1
+  const size = 5 * growth * scale()
+  const step = moving && Math.floor(run.clock * 20) % 2 ? 3 : 0
   sprite.forEach((row, j) => [...row].forEach((pixel, i) => {
     if (!colors[pixel]) return
     ctx.fillStyle = colors[pixel]
@@ -275,7 +288,7 @@ function render() {
   stars.forEach((s, i) => {
     if (!run?.collected.has(i)) star(trackX(s), trackY(s) - 73 * size)
   })
-  if (!run?.big) mushroom(trackX(mushroomX), trackY(mushroomX))
+  if (!run?.big) mushroom(trackX(mushroomX), trackY(mushroomX) - mushroomHeight * size)
   const pos = run?.x ?? .04
   const floor = trackY(pos)
   ctx.fillStyle = '#1a24484a'
@@ -311,9 +324,9 @@ function capture() {
   const token = ++resultToken
   card.toBlob(blob => {
     if (token !== resultToken || state !== 'finish') return
-    snapshot = blob && new File([blob], 'airweave.png', { type: 'image/png' })
+    snapshot = blob && new File([blob], 'airweave-instagram.jpg', { type: 'image/jpeg' })
     refresh(snapshot ? '完赛画面已定格。可分享或保存截图。' : '截图生成失败，请重新试跑。')
-  }, 'image/png')
+  }, 'image/jpeg', .92)
 }
 
 function download() {
@@ -328,7 +341,11 @@ function download() {
 share.onclick = async () => {
   if (!snapshot) return
   const payload = { files: [snapshot] }
-  if (!navigator.canShare?.(payload)) { download(); return }
+  if (!navigator.canShare?.(payload)) {
+    download()
+    window.open('https://www.instagram.com/', '_blank', 'noopener,noreferrer')
+    return
+  }
   try { await navigator.share(payload) }
   catch (error) {
     if (error.name !== 'AbortError') download()
